@@ -59,15 +59,12 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#include <big_256_29.h> // chunk 32
-#include <ecp_ED25519.h>
-
-
 #include <jutils.h>
 #include <zen_error.h>
 #include <zen_octet.h>
 #include <zen_ecp.h>
 #include <lua_functions.h>
+
 
 void oct2big(BIG_256_29 b, const octet *o) {
 	BIG_256_29_zero(b);
@@ -115,7 +112,7 @@ ecp* ecp_new(lua_State *L) {
 	if(!e) {
 		lerror(L, "Error allocating new ecp in %s",__func__);
 		return NULL; }
-	e->ed25519 = malloc(sizeof(ECP_ED25519));
+	e->ed25519 = malloc(sizeof(ed25519_key));
 	strcpy(e->curve,"ed25519");
 #if CURVETYPE_ED25519==MONTGOMERY
 	strcpy(e->type,"montgomery");

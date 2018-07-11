@@ -13,3 +13,6 @@
 [submodule "lib/lpeglabel"]
 	path = lib/lpeglabel
 	url = https://github.com/sqmedeiros/lpeglabel
+[submodule "lib/wolfssl"]
+	path = lib/wolfssl
+	url = git@github.com:wolfSSL/wolfssl

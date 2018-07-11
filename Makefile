@@ -19,13 +19,14 @@
 pwd := $(shell pwd)
 mil := ${pwd}/build/milagro
 extras := ${pwd}/docs/demo
+wolfssl := ${pwd}/lib/wolfssl
 
 # default
-gcc := gcc
-ar := ar
-ranlib := ranlib
+gcc := $(CROSS_COMPILE)gcc
+ar := $(CROSS_COMPILE)ar
+ranlib := $(CROSS_COMPILE)ranlib
 cflags_protection := -fstack-protector-all -D_FORTIFY_SOURCE=2 -fno-strict-overflow
-cflags := -O2 ${cflags_protection}
+cflags := -O2 ${cflags_protection} -DWOLFSSL_USER_SETTINGS -Iwolfssl -Iwolfssl/wolfssl/wolfcrypt
 musl := ${pwd}/build/musl
 platform := posix
 luasrc := ${pwd}/lib/lua53/src
@@ -117,9 +118,9 @@ static: ldflags := -static
 static: apply-patches lua53 milagro lpeglabel
 	CC=${gcc} CFLAGS="${cflags}" LDFLAGS="${ldflags}" make -C src static
 
-system-static: cflags := -Os -static -Wall -std=gnu99 ${cflags_protection} -D'ARCH=\"UNIX\"' -D__MUSL__
+system-static: cflags := -Os -static -Wall -std=gnu99 ${cflags_protection} -D'ARCH=\"UNIX\"' -D__MUSL__ -I${wolfssl} -I${wolfssl}/wolfssl/wolfcrypt -DWOLFSSL_USER_SETTINGS
 system-static: ldflags := -static
-system-static: apply-patches lua53 milagro lpeglabel
+system-static: apply-patches lua53 lpeglabel
 	CC=${gcc} CFLAGS="${cflags}" LDFLAGS="${ldflags}" make -C src system-static
 
 shared: gcc := gcc
@@ -216,8 +217,8 @@ lua53:
 
 milagro:
 	@echo "-- Building milagro (POSIX)"
-	if ! [ -r ${pwd}/lib/milagro-crypto-c/CMakeCache.txt ]; then cd ${pwd}/lib/milagro-crypto-c && CC=${gcc} cmake . -DCMAKE_C_FLAGS="${cflags}" ${milagro_cmake_flags}; fi
-	if ! [ -r ${pwd}/lib/milagro-crypto-c/lib/libamcl_core.a ]; then CC=${gcc} CFLAGS="${cflags}" make -C ${pwd}/lib/milagro-crypto-c; fi
+	if ! [ -r ${pwd}/lib/milagro-crypto-c/CMakeCache.txt ]; then cd ${pwd}/lib/milagro-crypto-c && CC=${gcc} cmake . -DCMAKE_C_FLAGS="${cflags} ${milagro_cmake_flags}"; fi
+	if ! [ -r ${pwd}/lib/milagro-crypto-c/lib/libamcl_core.a ]; then CC=${gcc} CFLAGS="${cflags} ${milagro_cmake_flags}" make -C ${pwd}/lib/milagro-crypto-c; fi
 
 milagro-win:
 	@echo "-- Building milagro (Windows)"

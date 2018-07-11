@@ -55,9 +55,8 @@
 #include <jutils.h>
 #include <zen_error.h>
 #include <lua_functions.h>
-#include <randombytes.h>
 
-#include <amcl.h>
+#include <zen_octet.h>
 
 #include <zenroom.h>
 #include <zen_memory.h>
