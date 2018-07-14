@@ -66,35 +66,18 @@
 #include <lua_functions.h>
 
 
-void oct2big(BIG_256_29 b, const octet *o) {
-	BIG_256_29_zero(b);
-	BIG_256_29_fromBytesLen(b,o->val,o->len);
+void oct2big(mp_int *b, const octet *o) {
+    mp_zero(b);
+    mp_read_unsigned_bin(b, o->val, o->len);
 }
-void int2big(BIG_256_29 b, int n) {
-	BIG_256_29_zero(b);
-	BIG_256_29_inc(b, n);
-	BIG_256_29_norm(b);
+void int2big(mp_int *b, int n) {
+    mp_zero(b);
+    mp_set_int(b, n);
 }
-char *big2strhex(char *str, BIG_256_29 a) {
-	BIG_256_29 b;
-	int i,len;
-	int modby2 = MODBYTES_256_29<<1;
-	len=BIG_256_29_nbits(a);
-	int lendiv4 = len>>2;
-	if (len%4==0) len=lendiv4;
-	else {
-		len=lendiv4;
-		len++;
-	}
-	if (len<modby2) len=modby2;
-	int c = 0;
-	for (i=len-1; i>=0; i--) {
-		BIG_256_29_copy(b,a);
-		BIG_256_29_shr(b,i<<2);
-		sprintf(str+c,"%01x",(unsigned int) b[0]&15);
-		c++;
-	}
-	return str;
+
+char *big2strhex(char *str, mp_int *a) {
+    mp_tohex(a, str);
+    return str;
 }
 
 /***
@@ -127,28 +110,31 @@ ecp* ecp_new(lua_State *L) {
 	lua_setmetatable(L, -2);
 	return(e);
 }
+
 ecp* ecp_arg(lua_State *L,int n) {
 	void *ud = luaL_checkudata(L, n, "zenroom.ecp");
 	luaL_argcheck(L, ud != NULL, n, "ecp class expected");
 	ecp *e = (ecp*)ud;
 	return(e);
 }
+
 ecp* ecp_dup(lua_State *L, const ecp* in) {
 	ecp *e = ecp_new(L); SAFE(e);
-	ECP_ED25519_copy(e->ed25519, in->ed25519);
+    memcpy(e->ed25519, in->ed25519, sizeof(ed25519_key));
 	return(e);
 }
+
 ecp* ecp_set_big_xy(lua_State *L, ecp *e, int idx) {
 	SAFE(e);
 	octet *o;
 	o = o_arg(L, idx); SAFE(o);
-	BIG_256_29 x;
+	mp_int *x;
 	oct2big(x, o);
 #if CURVETYPE_ED25519==MONTGOMERY
 	ECP_ED25519_set(e->ed25519, x);
 #else
 	o = o_arg(L, idx+1); SAFE(o);
-	BIG_256_29 y;
+	mp_int *y;
 	oct2big(y, o);
 	ECP_ED25519_set(e->ed25519, x, y);
 #endif
@@ -302,7 +288,7 @@ static int ecp_double(lua_State *L) {
     @return new ecp point resulting from the multiplication
 */
 static int ecp_mul(lua_State *L) {
-	BIG_256_29 big;
+	mp_int *big;
 	void *ud;
 	ecp *e = ecp_arg(L,1); SAFE(e);
 	if(lua_isnumber(L,2)) {
@@ -366,9 +352,9 @@ static int ecp_octet(lua_State *L) {
 */
 static int ecp_order(lua_State *L) {
 	octet *o = o_new(L, MODBYTES_256_29+1); SAFE(o);
-	// BIG_256_29 is an array of int32_t on chunk 32 (see rom_curve)
+	// mp_int *is an array of int32_t on chunk 32 (see rom_curve)
 	o->len = MODBYTES_256_29;
-	BIG_256_29 c;
+	mp_int *c;
 	// curve order is ready-only so we need a copy for norm() to work
 	BIG_256_29_copy(c,(chunk*)CURVE_Order_ED25519);
 	BIG_256_29_toBytes(o->val, c);
@@ -381,7 +367,7 @@ static int ecp_output(lua_State *L) {
 	if (ECP_ED25519_isinf(P)) {
 		lua_pushstring(L,"Infinity");
 		return 1; }
-	BIG_256_29 x;
+	mp_int *x;
 	char xs[256];
 	char out[512];
 	ECP_ED25519_affine(P);
@@ -395,7 +381,7 @@ static int ecp_output(lua_State *L) {
 	         e->curve, VERSION,
 	         big2strhex(xs,x));
 #else
-	BIG_256_29 y;
+	mp_int *y;
 	char ys[256];
 	FP_25519_redc(x,&(P->x));
 	FP_25519_redc(y,&(P->y));
