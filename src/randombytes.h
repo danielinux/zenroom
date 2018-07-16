@@ -5,8 +5,9 @@
 /* Load size_t on windows */
 #include <crtdefs.h>
 #else
+#ifndef HAVE_CUSTOM_GETRANDOM
 #include <sys/syscall.h>
-#include <unistd.h>
+#endif
 #endif /* _WIN32 */
 
 

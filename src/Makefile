@@ -32,6 +32,18 @@ SOURCES := \
 	zen_ecdh.o zen_ecdh_factory.o \
 	randombytes.o
 
+STANDALONE_SOURCES:= \
+	jutils.o zenroom.o zen_error.o \
+	lua_functions.o lua_modules.o lualibs_detected.o \
+	json.o json_strbuf.o json_fpconv.o \
+	umm_malloc.o zen_memory.o \
+	zen_io.o zen_ast.o repl.o \
+	zen_octet.o \
+	zen_ecdh.o zen_ecdh_factory_wolfssl.o \
+	randombytes.o
+
+
+
 # zen_rsa.o zen_rsa_aux.o \
 
 LDADD   := ../lib/lua53/src/liblua.a
@@ -72,6 +84,10 @@ static: ${SOURCES}
 
 system-static: ${SOURCES}
 	${CC} ${CFLAGS} ${SOURCES} -o zenroom-static ${LDFLAGS} ${LDADD}
+
+standalone: LDADD:= ../lib/lua53/src/liblua.a ../lib/lpeglabel/lpeglabel.a
+standalone: ${STANDALONE_SOURCES}
+	${CC} ${CFLAGS} ${STANDALONE_SOURCES} -o zenroom-standalone ${LDADD}
 
 shared: LDADD+=   -lm -lpthread
 shared: ${SOURCES}

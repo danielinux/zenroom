@@ -238,7 +238,10 @@ static int randombytes_bsd_randombytes(void *buf, size_t n)
 int randombytes(void *buf, size_t n)
 {
 	if(!n) return 0;
-#if defined(__EMSCRIPTEN__)
+
+#if defined(HAVE_CUSTOM_GETRANDOM)
+    return getrandom(buf, n);
+#elif defined(__EMSCRIPTEN__)
 # pragma message("Using crypto api from NodeJS")
 	return randombytes_js_randombytes_nodejs(buf, n);
 #elif defined(__linux__)

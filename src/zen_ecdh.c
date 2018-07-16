@@ -56,8 +56,13 @@
 #include <lua_functions.h>
 
 
+#ifndef STANDALONE
 // TODO: wrap this for more curves (may solve GOLDILOCKS)
 #include <ecdh_ED25519.h>
+#else
+#include "ecc.h"
+#include "aes.h"
+#endif
 
 
 #include <zenroom.h>
@@ -75,22 +80,45 @@ extern ecdh *ecdh_new_curve(lua_State *L, const char *curve);
 // @section ecdh.globals
 
 /***
-    Create a new ECDH encryption keyring using a specified curve or
-    ED25519 by default if omitted. The ECDH keyring created will
-    offer methods to interact with other keyrings.
+  Create a new ECDH encryption keyring using a specified curve or
+  ED25519 by default if omitted. The ECDH keyring created will
+  offer methods to interact with other keyrings.
 
-    Supported curves: ed25519, nist256, bn254cx, fp256bn
+  Supported curves: ed25519, nist256, bn254cx, fp256bn
 
-    @param curve[opt=ed25519] elliptic curve to be used
-    @return a new ECDH keyring
-    @function new(curve)
-    @usage
-    ecdh = require'ecdh'
-    keyring = ecdh.new('ed25519')
-    -- generate a keypair
-    keyring:keygen()
+  @param curve[opt=ed25519] elliptic curve to be used
+  @return a new ECDH keyring
+  @function new(curve)
+  @usage
+  ecdh = require'ecdh'
+  keyring = ecdh.new('ed25519')
+  -- generate a keypair
+keyring:keygen()
 */
+#ifdef STANDALONE
+ecdh *ecdh_new(lua_State *L, const char *curve)
+{
+	ecdh *e = ecdh_new_curve(L, curve);
+	if(!e) { 
+		SAFE(e); return NULL; 
+	}
+	if (wc_InitRng(&e->rng) != 0)
+		return NULL;
+	// key storage and key lengths are important
+	e->seckey = NULL;
+	e->seclen = e->keysize;   // TODO: check for each curve
+	e->pubkey = NULL;
+	e->publen = e->keysize*2; // TODO: check for each curve
 
+	// initialise a new random number generator
+	// TODO: make it a newuserdata object in LUA space so that
+	// it can be cleanly collected by the GC as well it can be
+	// saved transparently in the global state
+	luaL_getmetatable(L, "zenroom.ecdh");
+	lua_setmetatable(L, -2);
+	return(e);
+}
+#else
 ecdh* ecdh_new(lua_State *L, const char *curve) {
 	ecdh *e = ecdh_new_curve(L, curve);
 	if(!e) { SAFE(e); return NULL; }
@@ -121,6 +149,9 @@ ecdh* ecdh_new(lua_State *L, const char *curve) {
 	lua_setmetatable(L, -2);
 	return(e);
 }
+#endif
+
+
 ecdh* ecdh_arg(lua_State *L,int n) {
 	void *ud = luaL_checkudata(L, n, "zenroom.ecdh");
 	luaL_argcheck(L, ud != NULL, n, "ecdh class expected");
@@ -131,7 +162,9 @@ int ecdh_destroy(lua_State *L) {
 	HERE();
 	ecdh *e = ecdh_arg(L,1);
 	SAFE(e);
+#ifndef STANDALONE
 	if(e->rng) zen_memory_free(e->rng);
+#endif
 	// FREE(r->pubkey);
 	// FREE(r->privkey);
 	return 0;
@@ -141,17 +174,18 @@ int ecdh_destroy(lua_State *L) {
 // @type keyring
 
 /**
-   Generate an ECDH public/private key pair for a keyring
+  Generate an ECDH public/private key pair for a keyring
 
-   Keys generated are both returned and stored inside the
-   keyring. They can also be retrieved later using the
-   <code>:public()</code> and <code>:private()</code> methods if
-   necessary.
+  Keys generated are both returned and stored inside the
+  keyring. They can also be retrieved later using the
+  <code>:public()</code> and <code>:private()</code> methods if
+  necessary.
 
-   @function keyring:keygen()
-   @treturn[1] octet public key
-   @treturn[1] octet private key
-*/
+  @function keyring:keygen()
+  @treturn[1] octet public key
+  @treturn[1] octet private key
+  */
+
 static int ecdh_keygen(lua_State *L) {
 	HERE();
 	ecdh *e = ecdh_arg(L, 1);	SAFE(e);
@@ -175,14 +209,14 @@ static int ecdh_keygen(lua_State *L) {
 }
 
 /**
-   Validate an ECDH public key. Any octet can be a secret key, but
-   public keys aren't random and checking them is the only validation
-   possible.
+  Validate an ECDH public key. Any octet can be a secret key, but
+  public keys aren't random and checking them is the only validation
+  possible.
 
-   @param key the input public key octet to be validated
-   @function keyring:checkpub(key)
-   @return true if public key is OK, or false if not.
-*/
+  @param key the input public key octet to be validated
+  @function keyring:checkpub(key)
+  @return true if public key is OK, or false if not.
+  */
 
 static int ecdh_checkpub(lua_State *L) {
 	HERE();
@@ -193,8 +227,9 @@ static int ecdh_checkpub(lua_State *L) {
 			ERROR();
 			return lerror(L, "Public key not found."); }
 		pk = e->pubkey;
-	} else
+	} else {
 		pk = o_arg(L, 2); SAFE(pk);
+	}
 	if((*e->ECP__PUBLIC_KEY_VALIDATE)(pk)==0)
 		lua_pushboolean(L, 1);
 	else
@@ -203,18 +238,18 @@ static int ecdh_checkpub(lua_State *L) {
 }
 
 /**
-   Generate a Diffie-Hellman shared session key. This function takes a
-   two keyrings and calculates a shared key to be used in
-   communication. The same key is returned by any combination of
-   keyrings, making it possible to have asymmetric key
-   encryption. This is compliant with the IEEE-1363 Diffie-Hellman
-   shared secret specification.
+  Generate a Diffie-Hellman shared session key. This function takes a
+  two keyrings and calculates a shared key to be used in
+  communication. The same key is returned by any combination of
+  keyrings, making it possible to have asymmetric key
+  encryption. This is compliant with the IEEE-1363 Diffie-Hellman
+  shared secret specification.
 
-   @param public keyring containing the public key to be used
-   @param private keyring containing the private key to be used
-   @function keyring:session(public, private)
-   @return a new octet containing the shared session key
-*/
+  @param public keyring containing the public key to be used
+  @param private keyring containing the private key to be used
+  @function keyring:session(public, private)
+  @return a new octet containing the shared session key
+  */
 static int ecdh_session(lua_State *L) {
 	HERE();
 	void *ud;
@@ -230,13 +265,13 @@ static int ecdh_session(lua_State *L) {
 			return 0; }
 		pubkey = pk->pubkey; // take secret key from keyring
 		func(L, "%s: public key found in ecdh keyring (%u bytes)",
-		     __func__, pubkey->len);
+				__func__, pubkey->len);
 
 		// argument is an octet
 	} else if((ud = luaL_testudata(L, 2, "zenroom.octet"))) {
 		pubkey = (octet*)ud; // take secret key from octet
 		func(L, "%s: public key found in octet (%u bytes)",
-		     __func__, pubkey->len);
+				__func__, pubkey->len);
 
 	} else {
 		lerror(L, "%s: invalid key in argument",__func__);
@@ -253,15 +288,15 @@ static int ecdh_session(lua_State *L) {
 }
 
 /**
-   Imports or exports the public key from an ECDH keyring. This method
-   functions in two ways: without argument it returns the public key
-   of a keyring, or if an octet argument is provided it imports it as
-   public key inside the keyring, but it refuses to overwrite and
-   returns an error if a public key is already present.
+  Imports or exports the public key from an ECDH keyring. This method
+  functions in two ways: without argument it returns the public key
+  of a keyring, or if an octet argument is provided it imports it as
+  public key inside the keyring, but it refuses to overwrite and
+  returns an error if a public key is already present.
 
-   @param key[opt] octet of a public key to be imported
-   @function keyring:public(key)
-*/
+  @param key[opt] octet of a public key to be imported
+  @function keyring:public(key)
+  */
 static int ecdh_public(lua_State *L) {
 	HERE();
 	int res;
@@ -297,16 +332,16 @@ static int ecdh_public(lua_State *L) {
 
 
 /**
-   Imports or exports the secret key from an ECDH keyring. This method
-   functions in two ways: without argument it returns the secret key
-   of a keyring, or if an octet argument is provided it imports it as
-   secret key inside the keyring and generates a public key for it. If
-   a secret key is already present in the keyring it refuses to
-   overwrite and returns an error.
+  Imports or exports the secret key from an ECDH keyring. This method
+  functions in two ways: without argument it returns the secret key
+  of a keyring, or if an octet argument is provided it imports it as
+  secret key inside the keyring and generates a public key for it. If
+  a secret key is already present in the keyring it refuses to
+  overwrite and returns an error.
 
-   @param key[opt] octet of a public key to be imported
-   @function keyring:secret(key)
-*/
+  @param key[opt] octet of a public key to be imported
+  @function keyring:secret(key)
+  */
 static int ecdh_private(lua_State *L) {
 	HERE();
 	ecdh *e = ecdh_arg(L, 1);	SAFE(e);
@@ -334,15 +369,15 @@ static int ecdh_private(lua_State *L) {
 }
 
 /**
-   AES encrypts a plaintext to a ciphtertext. IEEE-1363
-   AES_CBC_IV0_ENCRYPT function. Encrypts in CBC mode with a zero IV,
-   padding as necessary to create a full final block.
+  AES encrypts a plaintext to a ciphtertext. IEEE-1363
+  AES_CBC_IV0_ENCRYPT function. Encrypts in CBC mode with a zero IV,
+  padding as necessary to create a full final block.
 
-   @param key AES key octet
-   @param message input text in an octet
-   @return a new octet containing the output ciphertext
-   @function keyring:encrypt(key, message)
-*/
+  @param key AES key octet
+  @param message input text in an octet
+  @return a new octet containing the output ciphertext
+  @function keyring:encrypt(key, message)
+  */
 
 static int ecdh_encrypt(lua_State *L) {
 	HERE();
@@ -351,23 +386,33 @@ static int ecdh_encrypt(lua_State *L) {
 	octet *in = o_arg(L, 3); SAFE(in);
 	// output is padded to next word
 	octet *out = o_new(L, in->len+0x0f); SAFE(out);
+#ifdef STANDALONE
+	Aes aes;
+	int sz = 0;
+	uint8_t iv[16] = {};
+	if (wc_AesCbcEncryptWithKey(&aes, out->val, in->val, in->len, k->val, k->len, iv) != 0) {
+		error(L, "%s: encryption failed.",__func__);
+		lua_pop(L, 1);
+		lua_pushboolean(L, 0);
+	}
+#else
 	AES_CBC_IV0_ENCRYPT(k,in,out);
-
+#endif
 	return 1;
 }
 
 /**
-   AES-GCM encrypt with Additional Data (AEAD)
-   encrypts and authenticate a plaintext to a ciphtertext. IEEE P802.1
+  AES-GCM encrypt with Additional Data (AEAD)
+  encrypts and authenticate a plaintext to a ciphtertext. IEEE P802.1
 
-   @param key AES key octet
-   @param message input text in an octet
-   @param iv initialization vector
-   @param header the additional data
-   @function keyring:aead_encrypt(key, message, iv, h)
-   @treturn[1] octet containing the output ciphertext
-   @treturn[1] octet containing the authentication tag (checksum)
-*/
+  @param key AES key octet
+  @param message input text in an octet
+  @param iv initialization vector
+  @param header the additional data
+  @function keyring:aead_encrypt(key, message, iv, h)
+  @treturn[1] octet containing the output ciphertext
+  @treturn[1] octet containing the authentication tag (checksum)
+  */
 
 static int ecdh_aead_encrypt(lua_State *L) {
 	HERE();
@@ -380,21 +425,37 @@ static int ecdh_aead_encrypt(lua_State *L) {
 	// output is padded to next word
 	octet *out = o_new(L, in->len+16); SAFE(out);
 	octet *t = o_new(L, 16); SAFE (t);
+#ifdef STANDALONE
+	Aes aes;
+	int res;
+	wc_AesGcmSetKey(&aes, k->val, k->len);
+	res = wc_AesGcmEncrypt(&aes, out->val, in->val, in->len, 
+			iv->val, iv->len,
+			t->val, t->len,
+			h->val, h->len);
+	if (res != 0) {
+		error(L, "%s: encryption failed.",__func__);
+		lua_pop(L, 1);
+		lua_pop(L, 1);
+		lua_pushboolean(L, 0);
+	}
+#else
 	AES_GCM_ENCRYPT(k, iv, h, in, out, t);
+#endif
 	return 2;
 }
 
 
 /**	AES decrypts a plaintext to a ciphtertext.
 
-	IEEE-1363 AES_CBC_IV0_DECRYPT function. Decrypts in CBC mode with
-	a zero IV.
+  IEEE-1363 AES_CBC_IV0_DECRYPT function. Decrypts in CBC mode with
+  a zero IV.
 
-	@param key AES key octet
-	@param ciphertext input ciphertext octet
-	@return a new octet containing the decrypted plain text, or false when failed
-	@function keyring:decrypt(key, ciphertext)
-*/
+  @param key AES key octet
+  @param ciphertext input ciphertext octet
+  @return a new octet containing the decrypted plain text, or false when failed
+  @function keyring:decrypt(key, ciphertext)
+  */
 
 static int ecdh_decrypt(lua_State *L) {
 	HERE();
@@ -403,25 +464,37 @@ static int ecdh_decrypt(lua_State *L) {
 	octet *in = o_arg(L, 3); SAFE(in);
 	// output is padded to next word
 	octet *out = o_new(L, in->len+16); SAFE(out);
+#ifdef STANDALONE
+	Aes aes;
+	int sz = 0;
+	uint8_t iv[16] = {};
+	if (wc_AesCbcEncryptWithKey(&aes, out->val, in->val, in->len, 
+				k->val, k->len, iv) != 0) {
+		error(L, "%s: decryption failed.",__func__);
+		lua_pop(L, 1);
+		lua_pushboolean(L, 0);
+	}
+#else
 	if(!AES_CBC_IV0_DECRYPT(k,in,out)) {
 		error(L, "%s: decryption failed.",__func__);
 		lua_pop(L, 1);
 		lua_pushboolean(L, 0);
 	}
+#endif
 	return 1;
 }
 
 /**
-   AES-GCM decrypt with Additional Data (AEAD)
-   decrypts and authenticate a plaintext to a ciphtertext . IEEE P802.1
+  AES-GCM decrypt with Additional Data (AEAD)
+  decrypts and authenticate a plaintext to a ciphtertext . IEEE P802.1
 
-   @param key AES key octet
-   @param message input text in an octet
-   @param iv initialization vector
-   @param header the additional data
-   @return a new octet containing the output ciphertext and the checksum
-   @function keyring:aead_decrypt(key, ciphertext, iv, h, tag)
-*/
+  @param key AES key octet
+  @param message input text in an octet
+  @param iv initialization vector
+  @param header the additional data
+  @return a new octet containing the output ciphertext and the checksum
+  @function keyring:aead_decrypt(key, ciphertext, iv, h, tag)
+  */
 
 static int ecdh_aead_decrypt(lua_State *L) {
 	HERE();
@@ -435,6 +508,17 @@ static int ecdh_aead_decrypt(lua_State *L) {
 	// output is padded to next word
 	octet *out = o_new(L, in->len+16); SAFE(out);
 	octet *t2 = o_new(L,t->len);
+#ifdef STANDALONE
+	Aes aes;
+	int sz = 0;
+	wc_AesGcmSetKey(&aes, k->val, k->len);
+	if (wc_AesGcmDecrypt(&aes, out->val, in->val, in->len, 
+				iv->val, iv->len, t->val, t->len, h->val, h->len) != 0) {
+		error(L, "%s: decryption failed.",__func__);
+		lua_pop(L, 1);
+		lua_pushboolean(L, 0);
+	}
+#else
 	AES_GCM_DECRYPT(k, iv, h, in, out, t2);
 
 	if(!OCT_comp(t, t2)) {
@@ -443,19 +527,20 @@ static int ecdh_aead_decrypt(lua_State *L) {
 		lua_pop(L, 1);
 		lua_pushboolean(L, 0);
 	}
+#endif
 	lua_pop(L, 1); // t2
 	return 1;
 }
 
 /**
-   Hash an octet into a new octet. Use the keyring's hash function to
-   hash an octet string and return a new one containing the hash of
-   the string.
+  Hash an octet into a new octet. Use the keyring's hash function to
+  hash an octet string and return a new one containing the hash of
+  the string.
 
-   @param string octet containing the data to be hashed
-   @function keyring:hash(string)
-   @return a new octet containing the hash of the data
-*/
+  @param string octet containing the data to be hashed
+  @function keyring:hash(string)
+  @return a new octet containing the hash of the data
+  */
 static int ecdh_hash(lua_State *L) {
 	HERE();
 	ecdh *e = ecdh_arg(L, 1);	SAFE(e);
@@ -467,16 +552,16 @@ static int ecdh_hash(lua_State *L) {
 }
 
 /**
-   Compute the HMAC of a message using a key. This method takes any
-   data and any key material to comput an HMAC of the same length of
-   the hash bytes of the keyring.
+  Compute the HMAC of a message using a key. This method takes any
+  data and any key material to comput an HMAC of the same length of
+  the hash bytes of the keyring.
 
-   @param key an octet containing the key to compute the HMAC
-   @param data an octet containing the message to compute the HMAC
-   @param len[opt=keyring->hash bytes] length of HMAC or default
-   @function keyring:hmac(key, data, len)
-   @return a new octet containing the computer HMAC or false on failure
-*/
+  @param key an octet containing the key to compute the HMAC
+  @param data an octet containing the message to compute the HMAC
+  @param len[opt=keyring->hash bytes] length of HMAC or default
+  @function keyring:hmac(key, data, len)
+  @return a new octet containing the computer HMAC or false on failure
+  */
 static int ecdh_hmac(lua_State *L) {
 	HERE();
 	ecdh *e = ecdh_arg(L, 1);	SAFE(e);
@@ -494,18 +579,18 @@ static int ecdh_hmac(lua_State *L) {
 }
 
 /**
-   Key Derivation Function (KDF2). Key derivation is used to
-   strengthen keys against bruteforcing: they impose a number of
-   costly computations to be iterated on the key. This function
-   generates a new key from an existing key applying an octet of key
-   derivation parameters.
+  Key Derivation Function (KDF2). Key derivation is used to
+  strengthen keys against bruteforcing: they impose a number of
+  costly computations to be iterated on the key. This function
+  generates a new key from an existing key applying an octet of key
+  derivation parameters.
 
-   @param parameters[opt=nil] octet of key derivation parameters (can be <code>nil</code>)
-   @param key octet of the key to be transformed
-   @param length[opt=key length] integer indicating the new length (default same as input key)
-   @function keyring:kdf2(parameters, key, length)
-   @return a new octet containing the derived key
-*/
+  @param parameters[opt=nil] octet of key derivation parameters (can be <code>nil</code>)
+  @param key octet of the key to be transformed
+  @param length[opt=key length] integer indicating the new length (default same as input key)
+  @function keyring:kdf2(parameters, key, length)
+  @return a new octet containing the derived key
+  */
 
 static int ecdh_kdf2(lua_State *L) {
 	HERE();
@@ -521,19 +606,19 @@ static int ecdh_kdf2(lua_State *L) {
 
 
 /**
-   Password Based Key Derivation Function (PBKDF2). This function
-   generates a new key from an existing key applying a salt and number
-   of iterations.
+  Password Based Key Derivation Function (PBKDF2). This function
+  generates a new key from an existing key applying a salt and number
+  of iterations.
 
-   @param key octet of the key to be transformed
-   @param salt octet containing a salt to be used in transformation
-   @param iterations[opt=1000] number of iterations to be applied
-   @param length[opt=key length] integer indicating the new length (default same as input key)
-   @function keyring:pbkdf2(key, salt, iterations, length)
-   @return a new octet containing the derived key
+  @param key octet of the key to be transformed
+  @param salt octet containing a salt to be used in transformation
+  @param iterations[opt=1000] number of iterations to be applied
+  @param length[opt=key length] integer indicating the new length (default same as input key)
+  @function keyring:pbkdf2(key, salt, iterations, length)
+  @return a new octet containing the derived key
 
-   @see keyring:kdf2
-*/
+  @see keyring:kdf2
+  */
 
 static int ecdh_pbkdf2(lua_State *L) {
 	HERE();
@@ -561,30 +646,30 @@ static int lua_new_ecdh(lua_State *L) {
 
 
 /**
-   Cryptographically Secure Random Number Generator (RNG).
+  Cryptographically Secure Random Number Generator (RNG).
 
-   Returns a new octet filled with random bytes.
+  Returns a new octet filled with random bytes.
 
-   This method is initialised with a different seed for each keyring
-   upon creation. It doesn't make any difference to use one keyring's
-   RNG or another, but mixing them and making this behavior specific
-   to different scripts helps randomness.
+  This method is initialised with a different seed for each keyring
+  upon creation. It doesn't make any difference to use one keyring's
+  RNG or another, but mixing them and making this behavior specific
+  to different scripts helps randomness.
 
-   Cryptographic security is achieved by hashing the random numbers
-   using this sequence: unguessable seed -> SHA -> PRNG internal state
-   -> SHA -> random numbers. See <a
-   href="ftp://ftp.rsasecurity.com/pub/pdfs/bull-1.pdf">this paper</a>
-   for a justification.
+  Cryptographic security is achieved by hashing the random numbers
+  using this sequence: unguessable seed -> SHA -> PRNG internal state
+  -> SHA -> random numbers. See <a
+  href="ftp://ftp.rsasecurity.com/pub/pdfs/bull-1.pdf">this paper</a>
+  for a justification.
 
-   @param int[opt=rsa->max] length of random material in bytes, defaults to maximum RSA size
-   @function random(int)
-   @usage
-   ecdh = require'ecdh'
-   ed25519 = ecdh.new('ed25519')
-   -- generate a random octet (will be sized 2048/8 bytes)
-   csrand = ed25519:random()
-   -- print out the cryptographically secure random sequence in hex
-   print(csrand:hex())
+  @param int[opt=rsa->max] length of random material in bytes, defaults to maximum RSA size
+  @function random(int)
+  @usage
+  ecdh = require'ecdh'
+  ed25519 = ecdh.new('ed25519')
+  -- generate a random octet (will be sized 2048/8 bytes)
+  csrand = ed25519:random()
+  -- print out the cryptographically secure random sequence in hex
+  print(csrand:hex())
 
 */
 static int ecdh_random(lua_State *L) {
@@ -597,19 +682,19 @@ static int ecdh_random(lua_State *L) {
 }
 
 #define COMMON_METHODS \
-	{"keygen",ecdh_keygen}, \
-	{"session",ecdh_session}, \
-	{"public", ecdh_public}, \
-	{"private", ecdh_private}, \
-	{"encrypt", ecdh_encrypt}, \
-	{"aead_encrypt", ecdh_aead_encrypt}, \
-	{"decrypt", ecdh_decrypt}, \
-	{"aead_decrypt", ecdh_aead_decrypt}, \
-	{"hash", ecdh_hash}, \
-	{"hmac", ecdh_hmac}, \
-	{"kdf2", ecdh_kdf2}, \
-	{"pbkdf2", ecdh_pbkdf2}, \
-	{"checkpub", ecdh_checkpub}
+{"keygen",ecdh_keygen}, \
+{"session",ecdh_session}, \
+{"public", ecdh_public}, \
+{"private", ecdh_private}, \
+{"encrypt", ecdh_encrypt}, \
+{"aead_encrypt", ecdh_aead_encrypt}, \
+{"decrypt", ecdh_decrypt}, \
+{"aead_decrypt", ecdh_aead_decrypt}, \
+{"hash", ecdh_hash}, \
+{"hmac", ecdh_hmac}, \
+{"kdf2", ecdh_kdf2}, \
+{"pbkdf2", ecdh_pbkdf2}, \
+{"checkpub", ecdh_checkpub}
 
 int luaopen_ecdh(lua_State *L) {
 	const struct luaL_Reg ecdh_class[] = {

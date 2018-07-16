@@ -24,8 +24,10 @@
 		
 
 #define HAVE_ED25519
+#define HAVE_GCM
 #define HAVE_POLY1305
 #define HAVE_SHA512
+#define HAVE_AES_DECRYPT
 #define WOLFSSL_SHA512
 
 /* Robustness */
